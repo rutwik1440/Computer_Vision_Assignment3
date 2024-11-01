@@ -14,150 +14,150 @@ class PanaromaStitcher():
     def __init__(self):
         pass
 
-    def make_panaroma_for_images_in(self, path):
-        imf = path
-        all_images = sorted(glob.glob(imf + os.sep + '*'))
-        print('Found {} Images for stitching'.format(len(all_images)))
+    def make_panaroma_for_images_in(self, directory_path):
+        image_folder = directory_path
+        images_for_stitching = sorted(glob.glob(image_folder + os.sep + '*'))
+        print('Found {} Images for stitching'.format(len(images_for_stitching)))
 
         # Collect all homographies calculated for pair of images and return
-        homography_matrix_list = []
+        transformations = []
 
-        if len(all_images) < 2:
+        if len(images_for_stitching) < 2:
             print('Need at least 2 images to stitch')
             return None
         else:
-            resized_size = 0.25 if len(all_images) >= 6 else 0.6
-            print('Image size is reduced to:', resized_size, "times the original size")
-            result_img = cv2.resize(cv2.imread(all_images[0]), (0, 0), fx=resized_size, fy=resized_size)
-            for i in range(1, 5):
-                left_img = result_img
-                right_img = cv2.resize(cv2.imread(all_images[i]), (0, 0), fx=resized_size, fy=resized_size)
-                result_img, final_H = self.solution(left_img, right_img)
-                homography_matrix_list.append(final_H)
-                print('Stitching Done for Image {} with panorama'.format(i))
-        stitched_image = result_img
+            scale_factor = 0.25 if len(images_for_stitching) >= 6 else 0.6
+            print('Image size is reduced to:', scale_factor, "times the original size")
+            final_image = cv2.resize(cv2.imread(images_for_stitching[0]), (0, 0), fx=scale_factor, fy=scale_factor)
+            for index in range(1, 5):
+                img_left = final_image
+                img_right = cv2.resize(cv2.imread(images_for_stitching[index]), (0, 0), fx=scale_factor, fy=scale_factor)
+                final_image, transformation_matrix = self.solution(img_left, img_right)
+                transformations.append(transformation_matrix)
+                print('Stitching Done for Image {} with panorama'.format(index))
+        stitched_output = final_image
 
-        return stitched_image, homography_matrix_list
+        return stitched_output, transformations
 
-    def perspective_transform(self, points, transformation_matrix):
-        original_shape = points.shape
+    def perspective_transform(self, coordinates, transformation):
+        original_shape = coordinates.shape
 
-        if len(points.shape) == 3:
-            points = points.reshape(-1, 2)
+        if len(coordinates.shape) == 3:
+            coordinates = coordinates.reshape(-1, 2)
 
-        homogeneous_points = np.hstack([points, np.ones((points.shape[0], 1))])
-        transformed_points = homogeneous_points @ transformation_matrix.T
-        transformed_points = transformed_points[:, :2] / transformed_points[:, 2:]
+        homogenous_coordinates = np.hstack([coordinates, np.ones((coordinates.shape[0], 1))])
+        transformed_coordinates = homogenous_coordinates @ transformation.T
+        transformed_coordinates = transformed_coordinates[:, :2] / transformed_coordinates[:, 2:]
 
-        mask = np.abs(transformed_points) > 1e10
-        transformed_points[mask] = 0
+        large_value_mask = np.abs(transformed_coordinates) > 1e10
+        transformed_coordinates[large_value_mask] = 0
 
         if len(original_shape) == 3:
-            transformed_points = transformed_points.reshape(original_shape)
+            transformed_coordinates = transformed_coordinates.reshape(original_shape)
 
-        return transformed_points
+        return transformed_coordinates
 
-    def warp_perspective(self, img, transformation_matrix, output_size):
-        width, height = output_size
-        output = np.zeros((height, width, 3) if len(img.shape) == 3 else (height, width), dtype=img.dtype)
-        input_height, input_width = img.shape[:2]
-        y, x = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
-        homogeneous_coords = np.stack([x, y, np.ones_like(x)], axis=-1)
-        points = homogeneous_coords.reshape(-1, 3)
+    def warp_perspective(self, img, transform, output_dimensions):
+        img_width, img_height = output_dimensions
+        output_image = np.zeros((img_height, img_width, 3) if len(img.shape) == 3 else (img_height, img_width), dtype=img.dtype)
+        img_input_height, img_input_width = img.shape[:2]
+        y_indices, x_indices = np.meshgrid(np.arange(img_height), np.arange(img_width), indexing='ij')
+        homogenous_points = np.stack([x_indices, y_indices, np.ones_like(x_indices)], axis=-1)
+        points_to_transform = homogenous_points.reshape(-1, 3)
 
         # Apply inverse transformation
-        H_inv = np.linalg.inv(transformation_matrix)
-        transformed_points = points @ H_inv.T
+        inverse_transform = np.linalg.inv(transform)
+        transformed_points = points_to_transform @ inverse_transform.T
         transformed_points = transformed_points[:, :2] / transformed_points[:, 2:]
-        transformed_points = transformed_points.reshape(height, width, 2)
+        transformed_points = transformed_points.reshape(img_height, img_width, 2)
 
-        src_x = transformed_points[:, :, 0]
-        src_y = transformed_points[:, :, 1]
-        valid_mask = (src_x >= 0) & (src_x < input_width - 1) & (src_y >= 0) & (src_y < input_height - 1)
+        transformed_x = transformed_points[:, :, 0]
+        transformed_y = transformed_points[:, :, 1]
+        valid_pixels = (transformed_x >= 0) & (transformed_x < img_input_width - 1) & (transformed_y >= 0) & (transformed_y < img_input_height - 1)
 
-        src_x = src_x.astype(np.int32)
-        src_y = src_y.astype(np.int32)
+        transformed_x = transformed_x.astype(np.int32)
+        transformed_y = transformed_y.astype(np.int32)
 
         if len(img.shape) == 3:
-            output[valid_mask] = img[src_y[valid_mask], src_x[valid_mask]]
+            output_image[valid_pixels] = img[transformed_y[valid_pixels], transformed_x[valid_pixels]]
         else:
-            output[valid_mask] = img[src_y[valid_mask], src_x[valid_mask]]
+            output_image[valid_pixels] = img[transformed_y[valid_pixels], transformed_x[valid_pixels]]
 
-        return output
+        return output_image
 
-    def solution(self, left_img, right_img):
-        key_points1, descriptor1, key_points2, descriptor2 = self.get_keypoint(left_img, right_img)
-        good_matches = self.match_keypoint(key_points1, key_points2, descriptor1, descriptor2)
-        final_H = self.ransac(good_matches)
+    def solution(self, img_left, img_right):
+        kp_left, desc_left, kp_right, desc_right = self.get_keypoint(img_left, img_right)
+        matched_points = self.match_keypoint(kp_left, kp_right, desc_left, desc_right)
+        homography_matrix = self.ransac(matched_points)
 
-        rows1, cols1 = right_img.shape[:2]
-        rows2, cols2 = left_img.shape[:2]
+        img_right_height, img_right_width = img_right.shape[:2]
+        img_left_height, img_left_width = img_left.shape[:2]
 
-        points1 = np.float32([[0, 0], [0, rows1], [cols1, rows1], [cols1, 0]]).reshape(-1, 1, 2)
-        points = np.float32([[0, 0], [0, rows2], [cols2, rows2], [cols2, 0]]).reshape(-1, 1, 2)
-        points2 = self.perspective_transform(points, final_H)
-        list_of_points = np.concatenate((points1, points2), axis=0)
+        corner_points_right = np.float32([[0, 0], [0, img_right_height], [img_right_width, img_right_height], [img_right_width, 0]]).reshape(-1, 1, 2)
+        corner_points_left = np.float32([[0, 0], [0, img_left_height], [img_left_width, img_left_height], [img_left_width, 0]]).reshape(-1, 1, 2)
+        transformed_corners = self.perspective_transform(corner_points_left, homography_matrix)
+        all_corners = np.concatenate((corner_points_right, transformed_corners), axis=0)
 
-        [x_min, y_min] = np.int32(list_of_points.min(axis=0).ravel() - 0.5)
-        [x_max, y_max] = np.int32(list_of_points.max(axis=0).ravel() + 0.5)
+        [min_x, min_y] = np.int32(all_corners.min(axis=0).ravel() - 0.5)
+        [max_x, max_y] = np.int32(all_corners.max(axis=0).ravel() + 0.5)
 
-        H_translation = np.array([[1, 0, (-x_min)], [0, 1, (-y_min)], [0, 0, 1]]).dot(final_H)
+        translate_transform = np.array([[1, 0, (-min_x)], [0, 1, (-min_y)], [0, 0, 1]]).dot(homography_matrix)
 
-        output_img = self.warp_perspective(left_img, H_translation, (x_max - x_min, y_max - y_min))
-        output_img[(-y_min):rows1 + (-y_min), (-x_min):cols1 + (-x_min)] = right_img
-        result_img = output_img
-        return result_img, final_H
+        final_output = self.warp_perspective(img_left, translate_transform, (max_x - min_x, max_y - min_y))
+        final_output[(-min_y):img_right_height + (-min_y), (-min_x):img_right_width + (-min_x)] = img_right
+        result = final_output
+        return result, homography_matrix
 
-    def get_keypoint(self, left_img, right_img):
-        kp1, des1 = cv2.SIFT_create().detectAndCompute(left_img, None)
-        kp2, des2 = cv2.SIFT_create().detectAndCompute(right_img, None)
-        return kp1, des1, kp2, des2
+    def get_keypoint(self, img_left, img_right):
+        keypoints_left, descriptors_left = cv2.SIFT_create().detectAndCompute(img_left, None)
+        keypoints_right, descriptors_right = cv2.SIFT_create().detectAndCompute(img_right, None)
+        return keypoints_left, descriptors_left, keypoints_right, descriptors_right
 
-    def match_keypoint(self, key_points1, key_points2, descriptor1, descriptor2):
-        bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-        matches = bf.knnMatch(descriptor1, descriptor2, k=2)
+    def match_keypoint(self, kp_left, kp_right, desc_left, desc_right):
+        matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
+        matches = matcher.knnMatch(desc_left, desc_right, k=2)
 
-        good_matches = []
-        for m, n in matches:
-            if m.distance < 0.75 * n.distance:
-                left_pt = key_points1[m.queryIdx].pt
-                right_pt = key_points2[m.trainIdx].pt
-                good_matches.append([left_pt[0], left_pt[1], right_pt[0], right_pt[1]])
+        filtered_matches = []
+        for match1, match2 in matches:
+            if match1.distance < 0.75 * match2.distance:
+                left_coordinates = kp_left[match1.queryIdx].pt
+                right_coordinates = kp_right[match1.trainIdx].pt
+                filtered_matches.append([left_coordinates[0], left_coordinates[1], right_coordinates[0], right_coordinates[1]])
 
-        return good_matches
+        return filtered_matches
 
-    def homography(self, points):
-        A = []
-        for pt in points:
-            x, y = pt[0], pt[1]
-            X, Y = pt[2], pt[3]
-            A.append([x, y, 1, 0, 0, 0, -1 * X * x, -1 * X * y, -1 * X])
-            A.append([0, 0, 0, x, y, 1, -1 * Y * x, -1 * Y * y, -1 * Y])
+    def homography(self, coordinate_pairs):
+        matrix_A = []
+        for coordinate_pair in coordinate_pairs:
+            x1, y1 = coordinate_pair[0], coordinate_pair[1]
+            x2, y2 = coordinate_pair[2], coordinate_pair[3]
+            matrix_A.append([x1, y1, 1, 0, 0, 0, -x2 * x1, -x2 * y1, -x2])
+            matrix_A.append([0, 0, 0, x1, y1, 1, -y2 * x1, -y2 * y1, -y2])
 
-        A = np.array(A)
-        u, s, vh = np.linalg.svd(A)
-        H = vh[-1, :].reshape(3, 3)
-        H = H / H[2, 2]
-        return H
+        matrix_A = np.array(matrix_A)
+        _, _, vh = np.linalg.svd(matrix_A)
+        transform_matrix = vh[-1, :].reshape(3, 3)
+        transform_matrix = transform_matrix / transform_matrix[2, 2]
+        return transform_matrix
 
-    def ransac(self, good_pts):
+    def ransac(self, match_points):
         best_inliers = []
-        final_H = []
-        t = 5
-        for i in range(500):
-            random_pts = random.choices(good_pts, k=4)
-            H = self.homography(random_pts)
-            inliers = []
-            for pt in good_pts:
-                p = np.array([pt[0], pt[1], 1]).reshape(3, 1)
-                p_1 = np.array([pt[2], pt[3], 1]).reshape(3, 1)
-                Hp = np.dot(H, p)
-                Hp = Hp / Hp[2]
-                dist = np.linalg.norm(p_1 - Hp)
+        best_transform = []
+        threshold_distance = 5
+        for _ in range(500):
+            sampled_points = random.choices(match_points, k=4)
+            current_transform = self.homography(sampled_points)
+            current_inliers = []
+            for match in match_points:
+                source_point = np.array([match[0], match[1], 1]).reshape(3, 1)
+                destination_point = np.array([match[2], match[3], 1]).reshape(3, 1)
+                transformed_point = np.dot(current_transform, source_point)
+                transformed_point = transformed_point / transformed_point[2]
+                distance = np.linalg.norm(destination_point - transformed_point)
 
-                if dist < t:
-                    inliers.append(pt)
+                if distance < threshold_distance:
+                    current_inliers.append(match)
 
-            if len(inliers) > len(best_inliers):
-                best_inliers, final_H = inliers, H
-        return final_H
+            if len(current_inliers) > len(best_inliers):
+                best_inliers, best_transform = current_inliers, current_transform
+        return best_transform

@@ -8,7 +8,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 import random
 
-random.seed(1234)
+random.seed(1000)
 
 class PanaromaStitcher():
     def __init__(self):
